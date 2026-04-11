@@ -1,6 +1,5 @@
 import express from 'express';
 import {
-  register,
   login,
   getProfile,
   updateProfile,
@@ -11,8 +10,7 @@ import { verifyToken, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Public routes
-router.post('/register', register);
+// Public routes - Login via Supabase Auth
 router.post('/login', login);
 
 // Protected routes

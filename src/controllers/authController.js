@@ -1,73 +1,7 @@
 import pool from '../config/database.js';
-import { hashPassword, comparePassword, generateToken } from '../utils/auth.js';
+import { generateToken } from '../utils/auth.js';
 
-// Register new user
-export const register = async (req, res) => {
-  const { name, email, password } = req.body;
-
-  // Validation
-  if (!name || !email || !password) {
-    return res.status(400).json({
-      success: false,
-      message: 'Name, email, and password are required'
-    });
-  }
-
-  try {
-    // Check if user already exists
-    const existingUser = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'Email already registered'
-      });
-    }
-
-    // Hash password
-    const passwordHash = await hashPassword(password);
-
-    // Create user
-    const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, token_balance) 
-       VALUES ($1, $2, $3, $4, $5) 
-       RETURNING id, name, email, role, token_balance, created_at`,
-      [name, email.toLowerCase(), passwordHash, 'user', 0]
-    );
-
-    const user = result.rows[0];
-
-    // Generate token
-    const token = generateToken(user);
-
-    res.status(201).json({
-      success: true,
-      message: 'Registration successful',
-      data: {
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          token_balance: user.token_balance
-        },
-        token
-      }
-    });
-  } catch (error) {
-    console.error('Register error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Registration failed',
-      error: error.message
-    });
-  }
-};
-
-// Login user
+// Login user (via Supabase Auth - user harus login dulu di Supabase)
 export const login = async (req, res) => {
   const { email, password } = req.body;
 
@@ -80,33 +14,51 @@ export const login = async (req, res) => {
   }
 
   try {
-    // Get user by email
+    // Note: Login dilakukan via Supabase Auth API
+    // Endpoint ini untuk mendapatkan token setelah user login di Supabase
+    // Frontend harus mengirim access_token dari Supabase setelah login
+    
+    const { access_token } = req.body;
+    
+    if (!access_token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Access token from Supabase is required'
+      });
+    }
+
+    // Verify token with Supabase and get user info
+    // User info akan diambil dari auth.users Supabase
     const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
+      `SELECT 
+         au.id,
+         au.email,
+         p.name,
+         p.role,
+         p.token_balance
+       FROM auth.users au
+       LEFT JOIN profiles p ON p.user_id = au.id
+       WHERE au.email = $1`,
       [email.toLowerCase()]
     );
 
     if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: 'Invalid credentials'
       });
     }
 
     const user = result.rows[0];
 
-    // Verify password
-    const isPasswordValid = await comparePassword(password, user.password_hash);
-
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password'
-      });
-    }
-
-    // Generate token
-    const token = generateToken(user);
+    // Generate JWT token untuk backend
+    const token = generateToken({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role || 'user',
+      token_balance: user.token_balance || 0
+    });
 
     res.json({
       success: true,
@@ -114,10 +66,10 @@ export const login = async (req, res) => {
       data: {
         user: {
           id: user.id,
-          name: user.name,
+          name: user.name || 'User',
           email: user.email,
-          role: user.role,
-          token_balance: user.token_balance
+          role: user.role || 'user',
+          token_balance: user.token_balance || 0
         },
         token
       }
@@ -136,9 +88,19 @@ export const login = async (req, res) => {
 export const getProfile = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, email, role, token_balance, created_at 
-       FROM users 
-       WHERE id = $1`,
+      `SELECT 
+         au.id,
+         au.email,
+         au.created_at,
+         p.name,
+         p.role,
+         p.token_balance,
+         p.avatar_url,
+         p.phone,
+         p.institution
+       FROM auth.users au
+       LEFT JOIN profiles p ON p.user_id = au.id
+       WHERE au.id = $1`,
       [req.user.id]
     );
 
@@ -163,17 +125,22 @@ export const getProfile = async (req, res) => {
   }
 };
 
-// Update user profile
+// Update user profile (melengkapi data pengguna di tabel profiles)
 export const updateProfile = async (req, res) => {
-  const { name } = req.body;
+  const { name, phone, institution, avatar_url } = req.body;
 
   try {
     const result = await pool.query(
-      `UPDATE users 
-       SET name = $1, updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $2 
-       RETURNING id, name, email, role, token_balance`,
-      [name, req.user.id]
+      `INSERT INTO profiles (user_id, name, phone, institution, avatar_url, updated_at)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+       ON CONFLICT (user_id) DO UPDATE SET
+         name = EXCLUDED.name,
+         phone = EXCLUDED.phone,
+         institution = EXCLUDED.institution,
+         avatar_url = EXCLUDED.avatar_url,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [req.user.id, name, phone, institution, avatar_url]
     );
 
     res.json({
@@ -191,7 +158,7 @@ export const updateProfile = async (req, res) => {
   }
 };
 
-// Change password
+// Change password - melalui Supabase Auth
 export const changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
@@ -203,38 +170,11 @@ export const changePassword = async (req, res) => {
   }
 
   try {
-    // Get user with password hash
-    const result = await pool.query(
-      'SELECT password_hash FROM users WHERE id = $1',
-      [req.user.id]
-    );
-
-    const user = result.rows[0];
-
-    // Verify current password
-    const isValid = await comparePassword(currentPassword, user.password_hash);
-
-    if (!isValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Current password is incorrect'
-      });
-    }
-
-    // Hash new password
-    const newPasswordHash = await hashPassword(newPassword);
-
-    // Update password
-    await pool.query(
-      `UPDATE users 
-       SET password_hash = $1, updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $2`,
-      [newPasswordHash, req.user.id]
-    );
-
-    res.json({
-      success: true,
-      message: 'Password changed successfully'
+    // Password change harus dilakukan melalui Supabase Auth API
+    // Endpoint ini hanya sebagai placeholder
+    res.status(501).json({
+      success: false,
+      message: 'Password change must be done through Supabase Auth API'
     });
   } catch (error) {
     console.error('Change password error:', error);
@@ -246,36 +186,32 @@ export const changePassword = async (req, res) => {
   }
 };
 
-// Admin: Create admin user (for initial setup)
+// Admin: Create admin user - melalui Supabase Auth
+// User harus signup dulu via Supabase Auth, lalu role di-set di profiles
 export const createAdmin = async (req, res) => {
-  const { name, email, password } = req.body;
+  const { user_id } = req.body;
+
+  if (!user_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'User ID from Supabase is required'
+    });
+  }
 
   try {
-    // Check if user exists
-    const existingUser = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: 'Email already registered'
-      });
-    }
-
-    const passwordHash = await hashPassword(password);
-
+    // Set role admin di profiles table
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, token_balance) 
-       VALUES ($1, $2, $3, $4, $5) 
-       RETURNING id, name, email, role, token_balance, created_at`,
-      [name, email.toLowerCase(), passwordHash, 'admin', 0]
+      `INSERT INTO profiles (user_id, role, token_balance)
+       VALUES ($1, 'admin', 0)
+       ON CONFLICT (user_id) DO UPDATE SET
+         role = 'admin'
+       RETURNING *`,
+      [user_id]
     );
 
     res.status(201).json({
       success: true,
-      message: 'Admin user created successfully',
+      message: 'Admin role assigned successfully',
       data: result.rows[0]
     });
   } catch (error) {

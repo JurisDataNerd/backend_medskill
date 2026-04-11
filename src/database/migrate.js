@@ -20,17 +20,19 @@ const createTables = async () => {
     await client.query('BEGIN');
 
     // Check if tables already exist (for existing Supabase database)
+    // Note: users table tidak dibuat lagi karena menggunakan auth.users dari Supabase
     const tablesToCreate = [
       {
-        name: 'users',
+        name: 'profiles',
         sql: `
-          CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            email VARCHAR(255) UNIQUE NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
+          CREATE TABLE IF NOT EXISTS profiles (
+            user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+            name VARCHAR(255),
             role VARCHAR(50) DEFAULT 'user' CHECK (role IN ('user', 'admin')),
             token_balance INTEGER DEFAULT 0,
+            avatar_url VARCHAR(500),
+            phone VARCHAR(50),
+            institution VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
@@ -90,7 +92,7 @@ const createTables = async () => {
         sql: `
           CREATE TABLE IF NOT EXISTS subscriptions (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
             package_type VARCHAR(50) NOT NULL CHECK (package_type IN ('full_access', 'per_stase', 'video_only', 'materi_only')),
             stase_id INTEGER REFERENCES stases(id) ON DELETE SET NULL,
             duration INTEGER NOT NULL CHECK (duration IN (1, 3, 6, 12)),
@@ -108,7 +110,7 @@ const createTables = async () => {
         sql: `
           CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
             subscription_id INTEGER REFERENCES subscriptions(id) ON DELETE SET NULL,
             amount INTEGER NOT NULL,
             payment_type VARCHAR(50),
@@ -140,7 +142,7 @@ const createTables = async () => {
         sql: `
           CREATE TABLE IF NOT EXISTS token_transactions (
             id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
             payment_id INTEGER REFERENCES payments(id) ON DELETE SET NULL,
             amount INTEGER NOT NULL,
             transaction_type VARCHAR(50) NOT NULL CHECK (transaction_type IN ('PURCHASE', 'USAGE', 'REFUND')),
@@ -157,7 +159,7 @@ const createTables = async () => {
           CREATE TABLE IF NOT EXISTS comments (
             id SERIAL PRIMARY KEY,
             video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
             content TEXT NOT NULL,
             token_used INTEGER DEFAULT 1,
             is_deleted BOOLEAN DEFAULT false,
@@ -172,7 +174,7 @@ const createTables = async () => {
           CREATE TABLE IF NOT EXISTS comment_replies (
             id SERIAL PRIMARY KEY,
             comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
-            admin_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            admin_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
             content TEXT NOT NULL,
             is_deleted BOOLEAN DEFAULT false,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -194,23 +196,23 @@ const createTables = async () => {
 
     // Create indexes (safe to run multiple times)
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-      CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
-      
+      CREATE INDEX IF NOT EXISTS idx_profiles_user_id ON profiles(user_id);
+      CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+
       CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
       CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
       CREATE INDEX IF NOT EXISTS idx_subscriptions_end_date ON subscriptions(end_date);
-      
+
       CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
       CREATE INDEX IF NOT EXISTS idx_payments_midtrans_order_id ON payments(midtrans_order_id);
       CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
-      
+
       CREATE INDEX IF NOT EXISTS idx_videos_stase_id ON videos(stase_id);
       CREATE INDEX IF NOT EXISTS idx_materials_stase_id ON materials(stase_id);
-      
+
       CREATE INDEX IF NOT EXISTS idx_comments_video_id ON comments(video_id);
       CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id);
-      
+
       CREATE INDEX IF NOT EXISTS idx_token_transactions_user_id ON token_transactions(user_id);
     `);
 

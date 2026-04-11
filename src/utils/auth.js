@@ -1,27 +1,19 @@
-import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 
-// Hash password
-export const hashPassword = async (password) => {
-  const salt = await bcrypt.genSalt(12);
-  return bcrypt.hash(password, salt);
-};
-
-// Compare password
-export const comparePassword = async (password, hash) => {
-  return bcrypt.compare(password, hash);
-};
+// Compare password (tidak dipakai lagi karena menggunakan Supabase Auth)
+// Password handling dilakukan oleh Supabase Auth
 
 // Generate JWT token
 export const generateToken = (user) => {
   return jwt.sign(
-    { 
-      id: user.id, 
+    {
+      id: user.id,
       email: user.email,
-      role: user.role 
+      role: user.role,
+      name: user.name,
+      token_balance: user.token_balance
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRE || '7d' }
   );
 };
-
-import jwt from 'jsonwebtoken';

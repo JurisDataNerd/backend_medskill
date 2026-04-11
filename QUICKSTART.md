@@ -167,26 +167,36 @@ Expected response:
 curl http://localhost:5000/api/stases
 ```
 
-### Register User
+### Authentication Flow (Supabase Auth)
 
-```bash
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Test User",
-    "email": "test@example.com",
-    "password": "password123"
-  }'
+**Step 1: Sign Up via Supabase**
+```javascript
+// Menggunakan Supabase JS Client
+const { data, error } = await supabase.auth.signUp({
+  email: 'test@example.com',
+  password: 'password123'
+})
 ```
 
-### Login
-
+**Step 2: Login & Exchange Token**
 ```bash
 curl -X POST http://localhost:5000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
-    "password": "password123"
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }'
+```
+
+**Step 3: Complete Profile**
+```bash
+curl -X PUT http://localhost:5000/api/auth/profile \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Test User",
+    "phone": "+628123456789",
+    "institution": "University of Indonesia"
   }'
 ```
 

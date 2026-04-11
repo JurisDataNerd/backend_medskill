@@ -235,15 +235,16 @@ export const createSubscription = async (userId, packageType, duration, staseId,
 export const getAllSubscriptions = async (req, res) => {
   try {
     const { status, package_type } = req.query;
-    
+
     let query = `
-      SELECT s.*, u.name as user_name, u.email as user_email, st.name as stase_name
+      SELECT s.*, COALESCE(p.name, au.email) as user_name, au.email as user_email, st.name as stase_name
       FROM subscriptions s
-      JOIN users u ON s.user_id = u.id
+      JOIN auth.users au ON s.user_id = au.id
+      LEFT JOIN profiles p ON p.user_id = au.id
       LEFT JOIN stases st ON s.stase_id = st.id
       WHERE 1=1
     `;
-    
+
     const params = [];
     let paramIndex = 1;
 

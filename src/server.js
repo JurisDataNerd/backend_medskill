@@ -108,8 +108,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
+// Start server - explicitly bind to IPv4 (0.0.0.0) for compatibility
+const HOST = '0.0.0.0';
+app.listen(PORT, HOST, () => {
   console.log(`
 ╔═══════════════════════════════════════════════╗
 ║     🏥 MedSkill Backend API Server           ║

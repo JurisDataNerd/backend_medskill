@@ -1,40 +1,41 @@
-import pool from './config/database.js';
-import { hashPassword } from './utils/auth.js';
+import pool from '../config/database.js';
 
-// Script untuk membuat admin user pertama
+// Script untuk set admin role di profiles table
+// User harus signup dulu via Supabase Auth, lalu jalankan script ini untuk set role admin
 const createFirstAdmin = async () => {
-  const name = 'Admin MedSkill';
-  const email = 'admin@medskillindonesia.com';
-  const password = 'Admin123!'; // Ganti setelah login pertama kali
+  const userId = process.env.ADMIN_USER_ID; // UUID dari Supabase Auth
+
+  if (!userId) {
+    console.error('❌ ADMIN_USER_ID environment variable is required');
+    console.error('Usage: ADMIN_USER_ID=<uuid-from-supabase-auth> npm run create-admin');
+    process.exit(1);
+  }
 
   try {
     // Check if admin already exists
     const existing = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
+      'SELECT user_id, role FROM profiles WHERE user_id = $1',
+      [userId]
     );
 
-    if (existing.rows.length > 0) {
-      console.log('⚠️  Admin user already exists!');
+    if (existing.rows.length > 0 && existing.rows[0].role === 'admin') {
+      console.log('⚠️  Admin role already exists for this user!');
       process.exit(0);
     }
 
-    // Hash password
-    const passwordHash = await hashPassword(password);
-
-    // Create admin user
+    // Set admin role in profiles
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, token_balance) 
-       VALUES ($1, $2, $3, 'admin', 0) 
-       RETURNING id, name, email, role, created_at`,
-      [name, email, passwordHash]
+      `INSERT INTO profiles (user_id, role, token_balance)
+       VALUES ($1, 'admin', 0)
+       ON CONFLICT (user_id) DO UPDATE SET
+         role = 'admin'
+       RETURNING user_id, role, created_at`,
+      [userId]
     );
 
-    console.log('✅ Admin user created successfully!');
-    console.log('\n📝 Login credentials:');
-    console.log(`   Email: ${email}`);
-    console.log(`   Password: ${password}`);
-    console.log('\n⚠️  IMPORTANT: Change password after first login!\n');
+    console.log('✅ Admin role assigned successfully!');
+    console.log(`\n📝 Admin User ID: ${userId}`);
+    console.log('\n⚠️  Make sure this user has signed up via Supabase Auth first!\n');
 
     process.exit(0);
   } catch (error) {

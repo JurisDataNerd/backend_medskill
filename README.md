@@ -125,13 +125,14 @@ Server akan berjalan di `http://localhost:5000`
 
 ### Authentication
 
+**Note:** Registration dan Login dilakukan melalui **Supabase Auth API**.
+
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| POST | `/api/auth/register` | Register user baru | ❌ |
-| POST | `/api/auth/login` | Login user | ❌ |
+| POST | `/api/auth/login` | Exchange Supabase token dengan JWT backend | ❌ |
 | GET | `/api/auth/profile` | Get profile user | ✅ |
-| PUT | `/api/auth/profile` | Update profile | ✅ |
-| PUT | `/api/auth/change-password` | Ganti password | ✅ |
+| PUT | `/api/auth/profile` | Update/Complete profile (profiles table) | ✅ |
+| PUT | `/api/auth/change-password` | Ganti password (via Supabase Auth) | ✅ |
 
 ### Stases
 
@@ -314,15 +315,10 @@ FRONTEND_URL=https://medskillindonesia.com
 Gunakan Postman atau curl untuk testing:
 
 ```bash
-# Register
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test User","email":"test@example.com","password":"password123"}'
-
-# Login
+# Login (setelah signup di Supabase)
 curl -X POST http://localhost:5000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"password123"}'
+  -d '{"email":"test@example.com","access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}'
 
 # Get Stases
 curl http://localhost:5000/api/stases

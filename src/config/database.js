@@ -2,20 +2,15 @@ import pkg from 'pg';
 const { Pool } = pkg;
 import dotenv from 'dotenv';
 import dns from 'dns';
-import { promisify } from 'util';
 
 dotenv.config();
 
-// Force IPv4 resolution
-const lookupAsync = promisify(dns.lookup);
-const originalLookup = dns.getDefaultResultOrder ? dns.getDefaultResultOrder() : 'ipv4first';
-
-// Override DNS to prefer IPv4
+// Override DNS to prefer IPv4 (must be set before any network calls)
 dns.setDefaultResultOrder?.('ipv4first');
 
-// Build connection string
+// Build connection string with proper encoding
 const password = encodeURIComponent(process.env.DB_PASSWORD);
-const connectionString = `postgresql://${process.env.DB_USER}:${password}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}?sslmode=require`;
+const connectionString = `postgresql://${process.env.DB_USER}:${password}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
 
 const pool = new Pool({
   connectionString,

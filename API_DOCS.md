@@ -20,38 +20,46 @@ Base URL: `http://localhost:5000/api`
 
 ## Authentication
 
-### Register User
+**Note:** Registration dan Login dilakukan melalui **Supabase Auth API**. 
+User harus signup/login dulu di Supabase, kemudian lengkapi data di tabel `profiles`.
 
-**Endpoint:** `POST /auth/register`
+### Complete Profile (Setelah Register di Supabase)
+
+**Endpoint:** `PUT /auth/profile`
+
+**Headers:**
+```
+Authorization: Bearer <token-dari-backend-login>
+```
 
 **Request Body:**
 ```json
 {
   "name": "John Doe",
-  "email": "john@example.com",
-  "password": "password123"
+  "phone": "+628123456789",
+  "institution": "University of Indonesia",
+  "avatar_url": "https://example.com/avatar.jpg"
 }
 ```
 
-**Response (201):**
+**Response (200):**
 ```json
 {
   "success": true,
-  "message": "Registration successful",
+  "message": "Profile updated successfully",
   "data": {
-    "user": {
-      "id": 1,
-      "name": "John Doe",
-      "email": "john@example.com",
-      "role": "user",
-      "token_balance": 0
-    },
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "user_id": "uuid-from-supabase-auth",
+    "name": "John Doe",
+    "role": "user",
+    "token_balance": 0,
+    "phone": "+628123456789",
+    "institution": "University of Indonesia",
+    "avatar_url": "https://example.com/avatar.jpg"
   }
 }
 ```
 
-### Login
+### Login (Exchange Supabase Token)
 
 **Endpoint:** `POST /auth/login`
 
@@ -59,7 +67,7 @@ Base URL: `http://localhost:5000/api`
 ```json
 {
   "email": "john@example.com",
-  "password": "password123"
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
@@ -70,7 +78,7 @@ Base URL: `http://localhost:5000/api`
   "message": "Login successful",
   "data": {
     "user": {
-      "id": 1,
+      "id": "uuid-from-supabase-auth",
       "name": "John Doe",
       "email": "john@example.com",
       "role": "user",
@@ -693,24 +701,26 @@ Credentials: `true`
 
 ## Testing with cURL
 
-### Register & Login
+### Authentication Flow (Supabase Auth)
 
+**Step 1: Register/Login via Supabase**
 ```bash
-# Register
-curl -X POST http://localhost:5000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Test User",
-    "email": "test@example.com",
-    "password": "password123"
-  }'
+# Gunakan Supabase Client atau Auth API
+# Contoh dengan Supabase JS Client:
+# const { data, error } = await supabase.auth.signUp({
+#   email: 'test@example.com',
+#   password: 'password123'
+# })
+```
 
-# Login
+**Step 2: Exchange Token dengan Backend**
+```bash
+# Login - tukar token Supabase dengan JWT backend
 curl -X POST http://localhost:5000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "test@example.com",
-    "password": "password123"
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }'
 
 # Get Profile (replace TOKEN with actual JWT token)

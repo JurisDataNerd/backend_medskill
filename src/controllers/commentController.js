@@ -6,9 +6,10 @@ export const getVideoComments = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT c.*, u.name as user_name 
+      `SELECT c.*, COALESCE(p.name, au.email) as user_name
        FROM comments c
-       JOIN users u ON c.user_id = u.id
+       JOIN auth.users au ON c.user_id = au.id
+       LEFT JOIN profiles p ON p.user_id = au.id
        WHERE c.video_id = $1 AND c.is_deleted = false
        ORDER BY c.created_at DESC`,
       [videoId]
@@ -18,9 +19,10 @@ export const getVideoComments = async (req, res) => {
     const comments = await Promise.all(
       result.rows.map(async (comment) => {
         const repliesResult = await pool.query(
-          `SELECT cr.*, u.name as admin_name 
+          `SELECT cr.*, COALESCE(p.name, au.email) as admin_name
            FROM comment_replies cr
-           JOIN users u ON cr.admin_id = u.id
+           JOIN auth.users au ON cr.admin_id = au.id
+           LEFT JOIN profiles p ON p.user_id = au.id
            WHERE cr.comment_id = $1 AND cr.is_deleted = false
            ORDER BY cr.created_at ASC`,
           [comment.id]
@@ -65,16 +67,16 @@ export const createComment = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Check user token balance
+    // Check user token balance from profiles
     const userResult = await client.query(
-      'SELECT token_balance FROM users WHERE id = $1',
+      'SELECT token_balance FROM profiles WHERE user_id = $1',
       [userId]
     );
 
     const user = userResult.rows[0];
     const tokenCost = 1; // 1 token per comment
 
-    if (user.token_balance < tokenCost) {
+    if (!user || (user.token_balance || 0) < tokenCost) {
       return res.status(402).json({
         success: false,
         message: 'Insufficient token balance. Please top up to comment.'
@@ -84,14 +86,16 @@ export const createComment = async (req, res) => {
     // Deduct token
     const newBalance = user.token_balance - tokenCost;
     await client.query(
-      'UPDATE users SET token_balance = $1 WHERE id = $2',
-      [newBalance, userId]
+      `INSERT INTO profiles (user_id, token_balance)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET token_balance = $2`,
+      [userId, newBalance]
     );
 
     // Create comment
     const commentResult = await client.query(
-      `INSERT INTO comments (video_id, user_id, content, token_used) 
-       VALUES ($1, $2, $3, $4) 
+      `INSERT INTO comments (video_id, user_id, content, token_used)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
       [videoId, userId, content, tokenCost]
     );

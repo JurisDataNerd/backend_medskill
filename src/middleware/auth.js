@@ -5,7 +5,7 @@ import pool from '../config/database.js';
 export const verifyToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
@@ -16,9 +16,17 @@ export const verifyToken = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Get user from database
+    // Get user from Supabase auth.users and profiles
     const result = await pool.query(
-      'SELECT id, name, email, role, token_balance FROM users WHERE id = $1',
+      `SELECT 
+         au.id,
+         au.email,
+         p.name,
+         p.role,
+         p.token_balance
+       FROM auth.users au
+       LEFT JOIN profiles p ON p.user_id = au.id
+       WHERE au.id = $1`,
       [decoded.id]
     );
 
@@ -67,13 +75,21 @@ export const isAdmin = (req, res, next) => {
 export const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       const result = await pool.query(
-        'SELECT id, name, email, role, token_balance FROM users WHERE id = $1',
+        `SELECT 
+           au.id,
+           au.email,
+           p.name,
+           p.role,
+           p.token_balance
+         FROM auth.users au
+         LEFT JOIN profiles p ON p.user_id = au.id
+         WHERE au.id = $1`,
         [decoded.id]
       );
 

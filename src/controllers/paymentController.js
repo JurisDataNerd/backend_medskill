@@ -274,25 +274,27 @@ const processTokenTopup = async (payment, grossAmount) => {
 
     const tokenAmount = tokenPackage.rows[0].token_amount;
 
-    // Get current balance
+    // Get current balance from profiles
     const userResult = await pool.query(
-      'SELECT token_balance FROM users WHERE id = $1',
+      'SELECT token_balance FROM profiles WHERE user_id = $1',
       [payment.user_id]
     );
 
-    const currentBalance = userResult.rows[0].token_balance;
+    const currentBalance = userResult.rows[0]?.token_balance || 0;
     const newBalance = currentBalance + tokenAmount;
 
-    // Update user token balance
+    // Update user token balance in profiles
     await pool.query(
-      'UPDATE users SET token_balance = $1 WHERE id = $2',
-      [newBalance, payment.user_id]
+      `INSERT INTO profiles (user_id, token_balance)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET token_balance = $2`,
+      [payment.user_id, newBalance]
     );
 
     // Record token transaction
     await pool.query(
-      `INSERT INTO token_transactions 
-       (user_id, payment_id, amount, transaction_type, description, balance_before, balance_after) 
+      `INSERT INTO token_transactions
+       (user_id, payment_id, amount, transaction_type, description, balance_before, balance_after)
        VALUES ($1, $2, $3, 'PURCHASE', $4, $5, $6)`,
       [payment.user_id, payment.id, tokenAmount, 'Token Top-up Purchase', currentBalance, newBalance]
     );
