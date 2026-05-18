@@ -3,13 +3,22 @@ import cors from "cors";
 import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import path from "path";
 
+import app from "./src/app.js";
 import emailRoutes from "./routes/emailRoutes.js";
 import mentorRoutes from "./routes/mentorRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
 
 dotenv.config();
 
-const app = express();
+/*
+|--------------------------------------------------------------------------
+| Trust Proxy (important behind nginx / cloudflare)
+|--------------------------------------------------------------------------
+*/
+
+app.set("trust proxy", 1);
 
 /*
 |--------------------------------------------------------------------------
@@ -17,7 +26,11 @@ const app = express();
 |--------------------------------------------------------------------------
 */
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+  })
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -25,22 +38,21 @@ app.use(helmet());
 |--------------------------------------------------------------------------
 */
 
-const allowedOrigins = process.env.NODE_ENV === "production"
-  ? [
-      "https://medskillindonesia.com",
-      "https://www.medskillindonesia.com"
-    ]
-  : [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://127.0.0.1:5173",
-      "http://127.0.0.1:5174"
-    ];
+const allowedOrigins =
+  process.env.NODE_ENV === "production"
+    ? [
+        "https://medskillindonesia.com",
+        "https://www.medskillindonesia.com"
+      ]
+    : [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174"
+      ];
 
 const corsOptions = {
-  origin: function (origin, callback) {
-
-    // allow server-to-server requests or curl
+  origin: (origin, callback) => {
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) {
@@ -48,11 +60,10 @@ const corsOptions = {
     } else {
       callback(new Error("CORS not allowed"));
     }
-
   },
   credentials: true,
-  methods: ["GET","POST","PUT","DELETE","PATCH","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"]
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 };
 
 app.use(cors(corsOptions));
@@ -63,22 +74,59 @@ app.use(cors(corsOptions));
 |--------------------------------------------------------------------------
 */
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 /*
 |--------------------------------------------------------------------------
-| Rate Limiting (anti abuse)
+| Rate Limiting
 |--------------------------------------------------------------------------
 */
 
-const limiter = rateLimit({
+const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  message: {
+    error: "Too many requests"
+  }
 });
 
-app.use(limiter);
+app.use("/api", apiLimiter);
+
+/*
+|--------------------------------------------------------------------------
+| Static Assets (TEMPORARY for development)
+|--------------------------------------------------------------------------
+|
+| WARNING:
+| In production video access should be protected via
+| authentication + subscription validation.
+|
+*/
+
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    maxAge: "1d"
+  })
+);
+
+/*
+|--------------------------------------------------------------------------
+| Health Check
+|--------------------------------------------------------------------------
+*/
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "MedSkill Backend API",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -88,18 +136,17 @@ app.use(limiter);
 
 app.use("/api/email", emailRoutes);
 app.use("/api/mentors", mentorRoutes);
+app.use("/api/payments", paymentRoutes);
 
 /*
 |--------------------------------------------------------------------------
-| Health Check
+| 404 Handler
 |--------------------------------------------------------------------------
 */
 
-app.get("/", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    service: "MedSkill Backend API",
-    timestamp: new Date().toISOString()
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Endpoint not found"
   });
 });
 
@@ -110,8 +157,7 @@ app.get("/", (req, res) => {
 */
 
 app.use((err, req, res, next) => {
-
-  console.error("Server Error:", err.message);
+  console.error("Server Error:", err);
 
   if (err.message === "CORS not allowed") {
     return res.status(403).json({
@@ -122,7 +168,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     error: "Internal Server Error"
   });
-
 });
 
 /*
@@ -131,7 +176,7 @@ app.use((err, req, res, next) => {
 |--------------------------------------------------------------------------
 */
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`🚀 MedSkill Backend running on port ${PORT}`);

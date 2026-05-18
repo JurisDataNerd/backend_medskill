@@ -10,4 +10,6 @@ if (!supabaseUrl || !supabaseKey) {
   console.warn("⚠️ Supabase credentials missing in .env");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+export default supabase;
