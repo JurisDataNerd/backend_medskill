@@ -3,6 +3,17 @@ import  supabase  from "../utils/supabase.js";
 
 const router = express.Router();
 
+/**
+ * @openapi
+ * /api/mentors:
+ *   get:
+ *     tags:
+ *       - Mentors
+ *     summary: Get list of mentors
+ *     responses:
+ *       200:
+ *         description: Returns list of mentors
+ */
 // GET /api/mentors
 router.get("/", async (req, res) => {
   try {
@@ -27,6 +38,23 @@ router.get("/", async (req, res) => {
   }
 });
 
+/**
+ * @openapi
+ * /api/mentors/{id}:
+ *   get:
+ *     tags:
+ *       - Mentors
+ *     summary: Get mentor by id
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Returns mentor data
+ */
 // GET /api/mentors/:id
 router.get("/:id", async (req, res) => {
   try {

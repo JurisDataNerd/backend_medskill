@@ -16,9 +16,35 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
 );
 
+/**
+ * @openapi
+ * /api/email/register:
+ *   post:
+ *     tags:
+ *       - Email
+ *     summary: Register a new user (stores in pending_users)
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               full_name:
+ *                 type: string
+ *               university:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Registration initiated, verification email sent
+ */
 /* =============================
-   REGISTER → simpan ke pending_users
-   ============================= */
+  REGISTER → simpan ke pending_users
+  ============================= */
 router.post("/register", async (req, res) => {
   try {
     const { email, password, full_name, university } = req.body;
@@ -43,9 +69,26 @@ router.post("/register", async (req, res) => {
   }
 });
 
+/**
+ * @openapi
+ * /api/email/verify/{token}:
+ *   get:
+ *     tags:
+ *       - Email
+ *     summary: Verify registration token and create user
+ *     parameters:
+ *       - in: path
+ *         name: token
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Verification successful
+ */
 /* =============================
-   VERIFY → buat user + pindah ke users
-   ============================= */
+  VERIFY → buat user + pindah ke users
+  ============================= */
 router.get("/verify/:token", async (req, res) => {
   try {
     const { token } = req.params;

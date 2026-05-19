@@ -1,48 +1,51 @@
 import supabase from "./supabase.js";
 
 export default async function checkSubscription(req, res, next) {
-
   try {
-
-    const { user_id } = req.body;
-    const { classId } = req.params;
+    const user_id = req.user?.id;
 
     if (!user_id) {
-      return res.status(401).json({
-        error: "User ID required"
-      });
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const classId = req.params?.classId || null;
+
+    const { data: subscriptions, error } = await supabase
+      .from("subscriptions")
+      .select("*, plans(*)")
+      .eq("user_id", user_id)
+      .eq("status", "active");
+
+    if (error) {
+      return res.status(500).json({ error: "Subscription check failed" });
+    }
+
+    if (!subscriptions?.length) {
+      return res.status(403).json({ error: "No active subscription" });
     }
 
     const now = new Date();
 
-    const { data: subscriptions } = await supabase
-      .from("subscriptions")
-      .select("*, plans(*)")
-      .eq("user_id", user_id)
-      .eq("status", "active")
-      .gte("end_date", now);
+    const validSubscriptions = subscriptions.filter((sub) => {
+      const endDate = new Date(sub.end_date);
+      return !isNaN(endDate) && endDate >= now;
+    });
 
-    if (!subscriptions || subscriptions.length === 0) {
-      return res.status(403).json({
-        error: "No active subscription"
-      });
+    if (!validSubscriptions.length) {
+      return res.status(403).json({ error: "No active subscription" });
     }
 
-    let allowed = false;
-
-    for (const sub of subscriptions) {
-
-      if (sub.plans.type === "full_course") {
-        allowed = true;
-        break;
-      }
-
-      if (sub.class_id === classId) {
-        allowed = true;
-        break;
-      }
-
+    if (!classId) {
+      req.subscriptions = validSubscriptions;
+      return next();
     }
+
+    const allowed = validSubscriptions.some((sub) => {
+      return (
+        sub.plans?.type === "full_course" ||
+        sub.class_id === classId
+      );
+    });
 
     if (!allowed) {
       return res.status(403).json({
@@ -50,16 +53,10 @@ export default async function checkSubscription(req, res, next) {
       });
     }
 
-    next();
-
-  } catch (err) {
-
-    console.error(err);
-
-    res.status(500).json({
+    return next();
+  } catch {
+    return res.status(500).json({
       error: "Subscription check failed"
     });
-
   }
-
 }

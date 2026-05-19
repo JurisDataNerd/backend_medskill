@@ -6,17 +6,30 @@ import { v4 as uuidv4 } from "uuid";
 
 const router = express.Router();
 
-
-
-/*
-================================
-CREATE PAYMENT
-POST /api/payments/create
-================================
-*/
+/**
+ * @openapi
+ * /api/payments/create:
+ *   post:
+ *     tags:
+ *       - Payments
+ *     summary: Create a payment and generate Midtrans transaction
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               user_id:
+ *                 type: string
+ *               plan_id:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Returns snap token and redirect url
+ */
 router.post("/create", async (req, res) => {
   try {
-
     const { user_id, plan_id } = req.body;
 
     if (!user_id || !plan_id) {
@@ -25,7 +38,6 @@ router.post("/create", async (req, res) => {
       });
     }
 
-    // ambil plan
     const { data: plan, error: planError } = await supabase
       .from("plans")
       .select("*")
@@ -33,9 +45,17 @@ router.post("/create", async (req, res) => {
       .single();
 
     if (planError || !plan) {
-      return res.status(404).json({
-        error: "Plan not found"
-      });
+      return res.status(404).json({ error: "Plan not found" });
+    }
+
+    const { data: user, error: userError } = await supabase
+      .from("profiles")
+      .select("email, full_name")
+      .eq("id", user_id)
+      .single();
+
+    if (userError || !user) {
+      return res.status(404).json({ error: "User not found" });
     }
 
     const orderId = "MEDSKILL-" + Date.now();
@@ -45,12 +65,15 @@ router.post("/create", async (req, res) => {
       transaction_details: {
         order_id: orderId,
         gross_amount: amount
+      },
+      customer_details: {
+        email: user.email,
+        first_name: user.full_name || "MedSkill User"
       }
     };
 
     const transaction = await snap.createTransaction(parameter);
 
-    // simpan payment
     const { error: paymentError } = await supabase
       .from("payments")
       .insert([
@@ -60,7 +83,7 @@ router.post("/create", async (req, res) => {
           plan_id,
           class_id: plan.class_id,
           order_id: orderId,
-          amount: amount,
+          amount,
           currency: "IDR",
           status: "pending",
           snap_token: transaction.token
@@ -69,9 +92,7 @@ router.post("/create", async (req, res) => {
 
     if (paymentError) {
       console.error(paymentError);
-      return res.status(500).json({
-        error: "Failed to create payment"
-      });
+      return res.status(500).json({ error: "Failed to create payment" });
     }
 
     return res.json({
@@ -81,28 +102,31 @@ router.post("/create", async (req, res) => {
     });
 
   } catch (err) {
-
     console.error(err);
-
-    return res.status(500).json({
-      error: "Payment creation failed"
-    });
-
+    return res.status(500).json({ error: "Payment creation failed" });
   }
 });
 
 
-
-/*
-================================
-MIDTRANS WEBHOOK
-POST /api/payments/notification
-================================
-*/
+/**
+ * @openapi
+ * /api/payments/notification:
+ *   post:
+ *     tags:
+ *       - Payments
+ *     summary: Midtrans webhook receiver
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *     responses:
+ *       200:
+ *         description: Webhook processed
+ */
 router.post("/notification", async (req, res) => {
-
   try {
-
     const notification = req.body;
 
     const {
@@ -117,69 +141,41 @@ router.post("/notification", async (req, res) => {
 
     const serverKey = process.env.MIDTRANS_SERVER_KEY;
 
-    /*
-    ================================
-    VERIFY SIGNATURE
-    ================================
-    */
     const hash = crypto
       .createHash("sha512")
       .update(order_id + status_code + gross_amount + serverKey)
       .digest("hex");
 
     if (hash !== signature_key) {
-      return res.status(403).json({
-        message: "Invalid signature"
-      });
+      return res.status(403).json({ message: "Invalid signature" });
     }
 
-    /*
-    ================================
-    GET PAYMENT
-    ================================
-    */
-    const { data: payment, error: paymentError } = await supabase
+    const { data: payment } = await supabase
       .from("payments")
       .select("*")
       .eq("order_id", order_id)
       .single();
 
-    if (paymentError || !payment) {
-      return res.status(404).json({
-        message: "Payment not found"
-      });
+    if (!payment) {
+      return res.status(404).json({ message: "Payment not found" });
     }
 
-    /*
-    ================================
-    UPDATE PAYMENT STATUS
-    ================================
-    */
+    const isSuccess = ["settlement", "capture"].includes(transaction_status);
+
     await supabase
       .from("payments")
       .update({
         status: transaction_status,
         payment_method: payment_type,
         midtrans_transaction_id: transaction_id,
-        paid_at: transaction_status === "settlement"
-          ? new Date()
-          : null
+        paid_at: isSuccess ? new Date() : null
       })
       .eq("order_id", order_id);
 
-
-
-    /*
-    ================================
-    IF PAYMENT SUCCESS
-    ================================
-    */
-    if (transaction_status === "settlement") {
-
-      /*
-      cek apakah subscription sudah ada
-      untuk mencegah double webhook
-      */
+    /**
+     * CREATE SUBSCRIPTION
+     */
+    if (isSuccess) {
       const { data: existing } = await supabase
         .from("subscriptions")
         .select("id")
@@ -187,27 +183,18 @@ router.post("/notification", async (req, res) => {
         .maybeSingle();
 
       if (!existing) {
-
-        /*
-        ambil duration dari plan
-        */
         const { data: plan } = await supabase
           .from("plans")
           .select("duration_days")
           .eq("id", payment.plan_id)
           .single();
 
-        const startDate = new Date();
+        if (plan) {
+          const startDate = new Date();
+          const endDate = new Date();
+          endDate.setDate(endDate.getDate() + plan.duration_days);
 
-        const endDate = new Date();
-
-        endDate.setDate(
-          endDate.getDate() + plan.duration_days
-        );
-
-        await supabase
-          .from("subscriptions")
-          .insert([
+          await supabase.from("subscriptions").insert([
             {
               user_id: payment.user_id,
               class_id: payment.class_id,
@@ -218,43 +205,42 @@ router.post("/notification", async (req, res) => {
               status: "active"
             }
           ]);
-
+        }
       }
-
     }
 
-    return res.json({
-      message: "Webhook processed"
-    });
+    return res.json({ message: "Webhook processed" });
 
   } catch (err) {
-
     console.error(err);
-
-    return res.status(500).json({
-      message: "Webhook failed"
-    });
-
+    return res.status(500).json({ message: "Webhook failed" });
   }
-
 });
 
-/*
-================================
-GET PAYMENT STATUS
-GET /api/payments/:order_id
-================================
-*/
+
+/**
+ * @openapi
+ * /api/payments/{order_id}:
+ *   get:
+ *     tags:
+ *       - Payments
+ *     summary: Get payment status by order id
+ *     parameters:
+ *       - in: path
+ *         name: order_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Returns payment information
+ */
 router.get("/:order_id", async (req, res) => {
-
   try {
-
     const { order_id } = req.params;
 
     if (!order_id) {
-      return res.status(400).json({
-        error: "order_id required"
-      });
+      return res.status(400).json({ error: "order_id required" });
     }
 
     const { data: payment, error } = await supabase
@@ -275,26 +261,15 @@ router.get("/:order_id", async (req, res) => {
       .single();
 
     if (error || !payment) {
-      return res.status(404).json({
-        error: "Payment not found"
-      });
+      return res.status(404).json({ error: "Payment not found" });
     }
 
-    return res.json({
-      success: true,
-      payment
-    });
+    return res.json({ success: true, payment });
 
   } catch (err) {
-
     console.error(err);
-
-    return res.status(500).json({
-      error: "Failed to fetch payment"
-    });
-
+    return res.status(500).json({ error: "Failed to fetch payment" });
   }
-
 });
 
 export default router;
