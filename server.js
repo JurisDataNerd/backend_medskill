@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import path from "path";
+import fs from "fs";
 
 import app from "./src/app.js";
 import emailRoutes from "./routes/emailRoutes.js";
@@ -109,9 +110,13 @@ app.use("/api", apiLimiter);
 |
 */
 
+const uploadsPath = fs.existsSync(path.join(process.cwd(), "uploads"))
+  ? path.join(process.cwd(), "uploads")
+  : path.join(process.cwd(), "..", "uploads");
+
 app.use(
   "/uploads",
-  express.static(path.join(process.cwd(), "uploads"), {
+  express.static(uploadsPath, {
     maxAge: "1d"
   })
 );
