@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -10,6 +11,14 @@ if (!supabaseUrl || !supabaseKey) {
   console.warn("⚠️ Supabase credentials missing in .env");
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(
+  supabaseUrl,
+  supabaseKey,
+  {
+    realtime: {
+      transport: ws
+    }
+  }
+);
 
 export default supabase;
