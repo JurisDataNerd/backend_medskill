@@ -10,7 +10,7 @@ export const getPlans = async (req, res) => {
       .order("price", { ascending: true });
 
     if (error) {
-      console.error(error);
+      // Error handling - no logs
       return res.status(500).json({
         success: false,
         message: "Failed to fetch plans",
@@ -24,7 +24,7 @@ export const getPlans = async (req, res) => {
 
   } catch (err) {
 
-    console.error(err);
+    // Error handling - no logs
 
     res.status(500).json({
       success: false,

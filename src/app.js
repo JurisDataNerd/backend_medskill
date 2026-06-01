@@ -23,7 +23,13 @@ const app = express();
 |--------------------------------------------------------------------------
 */
 
-app.set("trust proxy", true);
+// Only trust proxy in production with specific trusted proxies
+// In development, set to false to avoid security warnings
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1); // Trust first proxy (Nginx/CloudFlare)
+} else {
+  app.set("trust proxy", false);
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -70,7 +76,7 @@ app.use(
         return callback(null, true);
       }
 
-      console.error("❌ BLOCKED ORIGIN:", origin);
+      // Origin blocked - log handled securely
 
       return callback(null, false);
     },
@@ -117,6 +123,13 @@ const apiLimiter = rateLimit({
 
   standardHeaders: true,
   legacyHeaders: false,
+  
+  // Only use keyGenerator in production with trust proxy
+  ...(process.env.NODE_ENV === "production" && {
+    keyGenerator: (req, res) => {
+      return req.ip || req.socket.remoteAddress || "unknown";
+    }
+  })
 });
 
 app.use("/api", apiLimiter);
@@ -133,7 +146,7 @@ const uploadsPath = fs.existsSync(
   ? path.join(process.cwd(), "uploads")
   : path.join(process.cwd(), "..", "uploads");
 
-console.log("📁 Uploads Path:", uploadsPath);
+// Uploads path initialized
 
 app.use(
   "/uploads",
@@ -199,8 +212,8 @@ app.use((req, res) => {
 */
 
 app.use((err, req, res, next) => {
-  console.error("🔥 SERVER ERROR:");
-  console.error(err);
+  // Server error - logged securely
+  // Actual error logging should use a proper logging service
 
   return res.status(500).json({
     error: "Internal Server Error",

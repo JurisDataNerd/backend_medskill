@@ -28,7 +28,7 @@ export const getMe = async (req, res) => {
 
   } catch (err) {
 
-    console.error(err);
+    // Error handling - no logs
 
     res.status(500).json({
       error: "Failed to fetch user data"

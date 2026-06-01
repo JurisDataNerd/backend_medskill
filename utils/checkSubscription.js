@@ -45,7 +45,7 @@ export default async function checkSubscription(req, res, next) {
       .eq("status", "active");
 
     if (error) {
-      console.error("Subscription fetch error:", error);
+      // Error handling - no logs
 
       return res.status(500).json({
         error: "Subscription check failed"
@@ -143,7 +143,7 @@ export default async function checkSubscription(req, res, next) {
     return next();
 
   } catch (err) {
-    console.error("checkSubscription error:", err);
+    // Error handling - no logs
 
     return res.status(500).json({
       error: "Subscription check failed"
