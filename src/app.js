@@ -40,9 +40,23 @@ if (process.env.NODE_ENV === "production") {
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        // Masukkan URL frontend kamu di sini agar diizinkan masuk ke iframe
+        "frame-ancestors": [
+          "'self'",
+          "http://localhost:5173",
+          "http://localhost:5174",
+          "http://127.0.0.1:5173",
+          "http://127.0.0.1:5174",
+          "https://medskillindonesia.com",
+          "https://www.medskillindonesia.com"
+        ],
+      },
+    },
   })
 );
-
 /*
 |--------------------------------------------------------------------------
 | CORS
@@ -123,7 +137,7 @@ const apiLimiter = rateLimit({
 
   standardHeaders: true,
   legacyHeaders: false,
-  
+
   // Only use keyGenerator in production with trust proxy
   ...(process.env.NODE_ENV === "production" && {
     keyGenerator: (req, res) => {
