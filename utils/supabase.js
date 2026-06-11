@@ -21,4 +21,15 @@ const supabase = createClient(
   }
 );
 
+const supabaseAdmin = createClient(
+  supabaseUrl,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseKey,
+  {
+    realtime: {
+      transport: ws
+    }
+  }
+);
+
 export default supabase;
+export { supabaseAdmin };
