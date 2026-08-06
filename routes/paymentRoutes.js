@@ -1,6 +1,6 @@
 import express from "express";
-import snap from "../utils/midtrans.js";
-import supabase from "../utils/supabase.js";
+import snap, { coreApi } from "../utils/midtrans.js";
+import { supabaseAdmin as supabase } from "../utils/supabase.js";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 
@@ -30,26 +30,11 @@ const router = express.Router();
  */
 router.post("/create", async (req, res) => {
   try {
-    const { user_id, plan_id } = req.body;
+    const { user_id, plan_id, tryout_id } = req.body;
 
-    if (!user_id || !plan_id) {
+    if (!user_id || (!plan_id && !tryout_id)) {
       return res.status(400).json({
-        error: "user_id and plan_id required"
-      });
-    }
-
-    /**
-     * GET PLAN
-     */
-    const { data: plan, error: planError } = await supabase
-      .from("plans")
-      .select("*")
-      .eq("id", plan_id)
-      .single();
-
-    if (planError || !plan) {
-      return res.status(404).json({
-        error: "Plan not found"
+        error: "user_id and either plan_id or tryout_id required"
       });
     }
 
@@ -68,11 +53,58 @@ router.post("/create", async (req, res) => {
       });
     }
 
+    let amount = 0;
+    let itemId = "";
+    let itemName = "";
+    let classId = null;
+
+    if (tryout_id) {
+      /**
+       * GET TRYOUT SET
+       */
+      const { data: tryout, error: tryoutError } = await supabase
+        .from("tryout_sets")
+        .select("*")
+        .eq("id", tryout_id)
+        .single();
+
+      if (tryoutError || !tryout) {
+        return res.status(404).json({
+          error: "Tryout not found"
+        });
+      }
+
+      amount = Number(tryout.price || 0);
+      itemId = tryout.id;
+      itemName = `Tryout: ${tryout.title}`;
+    } else {
+      /**
+       * GET PLAN
+       */
+      const { data: plan, error: planError } = await supabase
+        .from("plans")
+        .select("*")
+        .eq("id", plan_id)
+        .single();
+
+      if (planError || !plan) {
+        return res.status(404).json({
+          error: "Plan not found"
+        });
+      }
+
+      amount = Number(plan.price);
+      itemId = plan.id;
+      itemName = plan.name || "Subscription Plan";
+      classId = plan.class_id || null;
+    }
+
     /**
      * CREATE ORDER
      */
-    const orderId = `MEDSKILL-${Date.now()}`;
-    const amount = Number(plan.price);
+    const orderId = tryout_id
+      ? `MSK-TRY-${Date.now()}`
+      : `MEDSKILL-${Date.now()}`;
 
     /**
      * FRONTEND URL
@@ -97,16 +129,16 @@ router.post("/create", async (req, res) => {
 
       item_details: [
         {
-          id: plan.id,
+          id: itemId,
           price: amount,
           quantity: 1,
-          name: plan.name || "Subscription Plan"
+          name: itemName.substring(0, 50)
         }
       ],
 
       callbacks: {
         finish: `${frontendUrl}/payment/success?order_id=${orderId}`,
-        error: `${frontendUrl}/payment/failed?order_id=${orderId}`,
+        error: `${frontendUrl}/payment/error?order_id=${orderId}`,
         pending: `${frontendUrl}/payment/pending?order_id=${orderId}`
       }
     };
@@ -119,27 +151,28 @@ router.post("/create", async (req, res) => {
     /**
      * SAVE PAYMENT
      */
+    const paymentPayload = {
+      id: uuidv4(),
+      user_id,
+      plan_id: plan_id || null,
+      tryout_id: tryout_id || null,
+      class_id: classId,
+      order_id: orderId,
+      amount,
+      currency: "IDR",
+      status: "pending",
+      snap_token: transaction.token,
+      redirect_url: transaction.redirect_url
+    };
+
     const { data: insertedPayment, error: paymentError } = await supabase
       .from("payments")
-      .insert([
-        {
-          id: uuidv4(),
-          user_id,
-          plan_id,
-          class_id: plan.class_id || null,
-          order_id: orderId,
-          amount,
-          currency: "IDR",
-          status: "pending",
-          snap_token: transaction.token,
-          redirect_url: transaction.redirect_url
-        }
-      ])
+      .insert([paymentPayload])
       .select()
       .single();
 
     if (paymentError) {
-      console.error(paymentError);
+      console.error("PAYMENT INSERT ERROR:", paymentError);
 
       return res.status(500).json({
         error: "Failed to create payment"
@@ -258,68 +291,108 @@ router.post("/notification", async (req, res) => {
       .eq("order_id", order_id);
 
     /**
-     * CREATE SUBSCRIPTION
+     * CREATE SUBSCRIPTION OR ACTIVATE TRYOUT
      */
     if (isSuccess) {
-
-      /**
-       * CHECK EXISTING SUBSCRIPTION
-       */
-      const { data: existingSubscription } = await supabase
-        .from("subscriptions")
-        .select("id")
-        .eq("payment_id", payment.id)
-        .maybeSingle();
-
-      if (!existingSubscription) {
-
+      if (payment.tryout_id) {
         /**
-         * GET PLAN
+         * ACTIVATE TRYOUT REGISTRATION
          */
-        const { data: plan } = await supabase
-          .from("plans")
-          .select("*")
-          .eq("id", payment.plan_id)
-          .single();
+        const { data: existingReg } = await supabase
+          .from("tryout_registrations")
+          .select("id")
+          .eq("user_id", payment.user_id)
+          .eq("tryout_id", payment.tryout_id)
+          .maybeSingle();
 
-        if (plan) {
+        const tryoutRegPayload = {
+          user_id: payment.user_id,
+          tryout_id: payment.tryout_id,
+          gform_submitted: true,
+          verified: true,
+          module_access: true,
+          package_type: "paid",
+          payment_id: payment.id,
+          paid_amount: payment.amount
+        };
 
-          const startDate = new Date();
+        let regError;
+        if (existingReg) {
+          const { error } = await supabase
+            .from("tryout_registrations")
+            .update({
+              verified: true,
+              module_access: true,
+              package_type: "paid",
+              payment_id: payment.id,
+              paid_amount: payment.amount
+            })
+            .eq("id", existingReg.id);
+          regError = error;
+        } else {
+          const { error } = await supabase
+            .from("tryout_registrations")
+            .insert([tryoutRegPayload]);
+          regError = error;
+        }
 
-          const endDate = new Date();
+        if (regError) {
+          console.error("TRYOUT REGISTRATION ACTIVATION ERROR:", regError);
+        } else {
+          console.log("TRYOUT REGISTRATION ACTIVATED FOR USER:", payment.user_id, "TRYOUT:", payment.tryout_id);
+        }
+      } else if (payment.plan_id) {
+        /**
+         * CHECK EXISTING SUBSCRIPTION
+         */
+        const { data: existingSubscription } = await supabase
+          .from("subscriptions")
+          .select("id")
+          .eq("payment_id", payment.id)
+          .maybeSingle();
 
-          endDate.setDate(
-            endDate.getDate() + (plan.duration_days || 30)
-          );
-
+        if (!existingSubscription) {
           /**
-           * IMPORTANT:
-           * class_id diambil langsung dari payment.class_id
+           * GET PLAN
            */
-          const subscriptionPayload = {
-            user_id: payment.user_id,
-            class_id: payment.class_id || null,
-            plan_id: payment.plan_id,
-            payment_id: payment.id,
-            start_date: startDate.toISOString(),
-            end_date: endDate.toISOString(),
-            status: "active"
-          };
+          const { data: plan } = await supabase
+            .from("plans")
+            .select("*")
+            .eq("id", payment.plan_id)
+            .single();
 
-          const { error: subError } = await supabase
-            .from("subscriptions")
-            .insert([subscriptionPayload]);
+          if (plan) {
+            const startDate = new Date();
+            const endDate = new Date();
+            endDate.setDate(
+              endDate.getDate() + (plan.duration_days || 30)
+            );
 
-          if (subError) {
-            console.error(
-              "SUBSCRIPTION INSERT ERROR:",
-              subError
-            );
-          } else {
-            console.log(
-              "SUBSCRIPTION CREATED:",
-              subscriptionPayload
-            );
+            const subscriptionPayload = {
+              user_id: payment.user_id,
+              class_id: payment.class_id || null,
+              plan_id: payment.plan_id,
+              payment_id: payment.id,
+              start_date: startDate.toISOString(),
+              end_date: endDate.toISOString(),
+              status: "active"
+            };
+
+            const { error: subError } = await supabase
+              .from("subscriptions")
+              .insert([subscriptionPayload]);
+
+            if (subError) {
+              console.error(
+                "SUBSCRIPTION INSERT ERROR:",
+                subError
+              );
+            } else {
+              console.log(
+                "SUBSCRIPTION CREATED:",
+                subscriptionPayload
+              );
+            }
           }
         }
       }

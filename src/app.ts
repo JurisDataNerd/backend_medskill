@@ -14,6 +14,8 @@ import mentorRoutes from "../routes/mentorRoutes.js";
 
 import plansRoutes from "./routes/plans.routes.js";
 import meRoutes from "./routes/me.routes.js";
+import rentalRoutes from "./routes/rental.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
 
 const app = express();
 
@@ -205,6 +207,8 @@ app.use("/api/mentors", mentorRoutes);
 
 app.use("/api/plans", plansRoutes);
 app.use("/api/me", meRoutes);
+app.use("/api/rental", rentalRoutes);
+app.use("/api/admin", adminRoutes);
 
 /*
 |--------------------------------------------------------------------------
