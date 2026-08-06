@@ -81,19 +81,32 @@ const allowedOrigins = [
   "https://smashed-revengefully-pei.ngrok-free.dev",
 ];
 
+const isAllowedOrigin = (origin: string): boolean => {
+  const cleanOrigin = origin.replace(/\/+$/, "");
+
+  if (allowedOrigins.includes(cleanOrigin)) return true;
+
+  if (process.env.FRONTEND_URL && cleanOrigin === process.env.FRONTEND_URL.replace(/\/+$/, "")) return true;
+  if (process.env.CLIENT_URL && cleanOrigin === process.env.CLIENT_URL.replace(/\/+$/, "")) return true;
+  if (process.env.CORS_ORIGIN && cleanOrigin === process.env.CORS_ORIGIN.replace(/\/+$/, "")) return true;
+
+  // Allow all medskillindonesia.com subdomains (http & https)
+  if (/^https?:\/\/(.+\.)?medskillindonesia\.com$/i.test(cleanOrigin)) return true;
+
+  // Allow localhost / 127.0.0.1 with any port
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(cleanOrigin)) return true;
+
+  return false;
+};
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin) {
+      if (!origin || isAllowedOrigin(origin)) {
         return callback(null, true);
       }
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      // Origin blocked - log handled securely
-
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
       return callback(null, false);
     },
 
@@ -109,9 +122,15 @@ app.use(
       "Authorization",
       "user-id",
       "x-user-id",
+      "Access-Control-Allow-Origin",
     ],
+
+    optionsSuccessStatus: 200,
   })
 );
+
+// Enable pre-flight for all routes
+app.options("*", cors());
 
 /*
 |--------------------------------------------------------------------------
