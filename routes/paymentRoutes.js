@@ -240,6 +240,13 @@ router.post("/notification", async (req, res) => {
       .digest("hex");
 
     if (hash !== signature_key) {
+      if (order_id?.startsWith("payment_notif_test_")) {
+        return res.status(200).json({
+          success: true,
+          message: "Midtrans test notification received"
+        });
+      }
+
       return res.status(403).json({
         message: "Invalid signature"
       });
@@ -255,6 +262,13 @@ router.post("/notification", async (req, res) => {
       .single();
 
     if (paymentFetchError || !payment) {
+      if (order_id?.startsWith("payment_notif_test_")) {
+        return res.status(200).json({
+          success: true,
+          message: "Midtrans test notification received"
+        });
+      }
+
       return res.status(404).json({
         message: "Payment not found"
       });
