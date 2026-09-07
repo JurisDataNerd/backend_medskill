@@ -30,11 +30,11 @@ const router = express.Router();
  */
 router.post("/create", async (req, res) => {
   try {
-    const { user_id, plan_id, tryout_id } = req.body;
+    const { user_id, plan_id, tryout_id, simulation_id, bimbel_class_id, package_id } = req.body;
 
-    if (!user_id || (!plan_id && !tryout_id)) {
+    if (!user_id || (!plan_id && !tryout_id && !simulation_id && !bimbel_class_id)) {
       return res.status(400).json({
-        error: "user_id and either plan_id or tryout_id required"
+        error: "user_id and either plan_id, tryout_id, simulation_id or bimbel_class_id required"
       });
     }
 
@@ -57,8 +57,77 @@ router.post("/create", async (req, res) => {
     let itemId = "";
     let itemName = "";
     let classId = null;
+    let bimbelPackageId = package_id || null;
 
-    if (tryout_id) {
+    if (bimbel_class_id) {
+      /**
+       * GET BIMBEL CLASS & PACKAGE
+       */
+      let pkg = null;
+      if (package_id) {
+        const { data: foundPkg } = await supabase
+          .from("bimbel_packages")
+          .select("*, bimbel_classes(id, title)")
+          .eq("id", package_id)
+          .maybeSingle();
+        pkg = foundPkg;
+      }
+
+      if (!pkg) {
+        const { data: defaultPkg } = await supabase
+          .from("bimbel_packages")
+          .select("*, bimbel_classes(id, title)")
+          .eq("class_id", bimbel_class_id)
+          .eq("is_active", true)
+          .order("order_index", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        pkg = defaultPkg;
+      }
+
+      if (pkg) {
+        bimbelPackageId = pkg.id;
+        amount = Number(pkg.promo_price !== null && pkg.promo_price !== undefined ? pkg.promo_price : pkg.price);
+        itemId = pkg.id;
+        const classTitle = pkg.bimbel_classes?.title || "Bimbel Class";
+        itemName = `${classTitle} - ${pkg.name}`;
+      } else {
+        const { data: bimbelClass, error: bcError } = await supabase
+          .from("bimbel_classes")
+          .select("*")
+          .eq("id", bimbel_class_id)
+          .single();
+
+        if (bcError || !bimbelClass) {
+          return res.status(404).json({
+            error: "Class not found"
+          });
+        }
+
+        amount = Number(bimbelClass.price || 0);
+        itemId = bimbelClass.id;
+        itemName = `Bimbel: ${bimbelClass.title}`;
+      }
+    } else if (simulation_id) {
+      /**
+       * GET SIMULATION SET
+       */
+      const { data: simulation, error: simError } = await supabase
+        .from("simulation_sets")
+        .select("*")
+        .eq("id", simulation_id)
+        .single();
+
+      if (simError || !simulation) {
+        return res.status(404).json({
+          error: "Simulation not found"
+        });
+      }
+
+      amount = Number(simulation.price || 0);
+      itemId = simulation.id;
+      itemName = `Simulasi: ${simulation.title}`;
+    } else if (tryout_id) {
       /**
        * GET TRYOUT SET
        */
@@ -102,7 +171,11 @@ router.post("/create", async (req, res) => {
     /**
      * CREATE ORDER
      */
-    const orderId = tryout_id
+    const orderId = bimbel_class_id
+      ? `MSK-KLS-${Date.now()}`
+      : simulation_id
+      ? `MSK-SIM-${Date.now()}`
+      : tryout_id
       ? `MSK-TRY-${Date.now()}`
       : `MEDSKILL-${Date.now()}`;
 
@@ -156,6 +229,9 @@ router.post("/create", async (req, res) => {
       user_id,
       plan_id: plan_id || null,
       tryout_id: tryout_id || null,
+      simulation_id: simulation_id || null,
+      bimbel_class_id: bimbel_class_id || null,
+      bimbel_package_id: bimbelPackageId || null,
       class_id: classId,
       order_id: orderId,
       amount,
@@ -177,6 +253,33 @@ router.post("/create", async (req, res) => {
       return res.status(500).json({
         error: "Failed to create payment"
       });
+    }
+
+    /**
+     * IF BIMBEL CLASS, CREATE PENDING REGISTRATION
+     */
+    if (bimbel_class_id) {
+      let waLink = null;
+      if (bimbelPackageId) {
+        const { data: pkgData } = await supabase
+          .from("bimbel_packages")
+          .select("wa_group_link")
+          .eq("id", bimbelPackageId)
+          .maybeSingle();
+        waLink = pkgData?.wa_group_link || null;
+      }
+
+      await supabase
+        .from("bimbel_registrations")
+        .insert([{
+          user_id,
+          class_id: bimbel_class_id,
+          package_id: bimbelPackageId,
+          payment_id: insertedPayment.id,
+          status: "pending",
+          paid_amount: amount,
+          wa_group_link: waLink
+        }]);
     }
 
     return res.json({
@@ -305,10 +408,58 @@ router.post("/notification", async (req, res) => {
       .eq("order_id", order_id);
 
     /**
-     * CREATE SUBSCRIPTION OR ACTIVATE TRYOUT
+     * CREATE SUBSCRIPTION OR ACTIVATE TRYOUT/SIMULATION
      */
     if (isSuccess) {
-      if (payment.tryout_id) {
+      if (payment.simulation_id) {
+        /**
+         * ACTIVATE SIMULATION REGISTRATION
+         */
+        const { data: existingReg } = await supabase
+          .from("simulation_registrations")
+          .select("id")
+          .eq("user_id", payment.user_id)
+          .eq("simulation_id", payment.simulation_id)
+          .maybeSingle();
+
+        const simRegPayload = {
+          user_id: payment.user_id,
+          simulation_id: payment.simulation_id,
+          gform_submitted: true,
+          verified: true,
+          module_access: true,
+          package_type: "paid",
+          payment_id: payment.id,
+          paid_amount: payment.amount
+        };
+
+        let regError;
+        if (existingReg) {
+          const { error } = await supabase
+            .from("simulation_registrations")
+            .update({
+              verified: true,
+              module_access: true,
+              package_type: "paid",
+              payment_id: payment.id,
+              paid_amount: payment.amount,
+              gform_submitted: true
+            })
+            .eq("id", existingReg.id);
+          regError = error;
+        } else {
+          const { error } = await supabase
+            .from("simulation_registrations")
+            .insert([simRegPayload]);
+          regError = error;
+        }
+
+        if (regError) {
+          console.error("SIMULATION REGISTRATION ACTIVATION ERROR:", regError);
+        } else {
+          console.log("SIMULATION REGISTRATION ACTIVATED FOR USER:", payment.user_id, "SIMULATION:", payment.simulation_id);
+        }
+      } else if (payment.tryout_id) {
         /**
          * ACTIVATE TRYOUT REGISTRATION
          */
@@ -409,6 +560,54 @@ router.post("/notification", async (req, res) => {
             }
           }
         }
+      } else if (payment.bimbel_class_id) {
+        /**
+         * ACTIVATE BIMBEL REGISTRATION
+         */
+        let waLink = null;
+        if (payment.bimbel_package_id) {
+          const { data: pkgData } = await supabase
+            .from("bimbel_packages")
+            .select("wa_group_link")
+            .eq("id", payment.bimbel_package_id)
+            .maybeSingle();
+          waLink = pkgData?.wa_group_link || null;
+        }
+
+        const { data: existingReg } = await supabase
+          .from("bimbel_registrations")
+          .select("id")
+          .eq("payment_id", payment.id)
+          .maybeSingle();
+
+        if (existingReg) {
+          await supabase
+            .from("bimbel_registrations")
+            .update({
+              status: "paid",
+              paid_amount: payment.amount,
+              payment_type: payment_type,
+              wa_group_link: waLink,
+              paid_at: new Date().toISOString()
+            })
+            .eq("id", existingReg.id);
+        } else {
+          await supabase
+            .from("bimbel_registrations")
+            .insert([{
+              user_id: payment.user_id,
+              class_id: payment.bimbel_class_id,
+              package_id: payment.bimbel_package_id || null,
+              payment_id: payment.id,
+              status: "paid",
+              paid_amount: payment.amount,
+              payment_type: payment_type,
+              wa_group_link: waLink,
+              paid_at: new Date().toISOString()
+            }]);
+        }
+
+        console.log("BIMBEL REGISTRATION ACTIVATED FOR USER:", payment.user_id, "CLASS:", payment.bimbel_class_id);
       }
     }
 
@@ -466,7 +665,11 @@ router.get("/:order_id", async (req, res) => {
         created_at,
         paid_at,
         plan_id,
-        class_id
+        class_id,
+        tryout_id,
+        simulation_id,
+        bimbel_class_id,
+        bimbel_package_id
       `)
       .eq("order_id", order_id)
       .single();
@@ -477,9 +680,29 @@ router.get("/:order_id", async (req, res) => {
       });
     }
 
+    let bimbelRegistration = null;
+    if (payment.bimbel_class_id) {
+      const { data: bReg } = await supabase
+        .from("bimbel_registrations")
+        .select(`
+          id,
+          status,
+          wa_group_link,
+          bimbel_classes(id, title, img_url),
+          bimbel_packages(id, name, wa_group_link)
+        `)
+        .eq("payment_id", payment.id)
+        .maybeSingle();
+
+      bimbelRegistration = bReg;
+    }
+
     return res.json({
       success: true,
-      payment
+      payment: {
+        ...payment,
+        bimbel_registration: bimbelRegistration
+      }
     });
 
   } catch (err) {

@@ -129,8 +129,8 @@ app.use(
   })
 );
 
-// Enable pre-flight for all routes
-app.options("*", cors());
+// Enable pre-flight for all routes (Express 5 compatible wildcard syntax)
+app.options("{*path}", cors());
 
 /*
 |--------------------------------------------------------------------------
