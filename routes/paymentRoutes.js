@@ -728,15 +728,6 @@ router.post("/notification", async (req, res) => {
   }
 });
 
-
-/**
- * @openapi
- * /api/payments/{order_id}:
- *   get:
- *     tags:
- *       - Payments
- *     summary: Get payment status by order id
- *     parameters:
 /**
  * @openapi
  * /api/payments/tryout-eligibility/{userId}:
