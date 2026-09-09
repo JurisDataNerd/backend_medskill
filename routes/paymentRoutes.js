@@ -30,11 +30,20 @@ const router = express.Router();
  */
 router.post("/create", async (req, res) => {
   try {
-    const { user_id, plan_id, tryout_id, simulation_id, bimbel_class_id, package_id } = req.body;
+    const {
+      user_id,
+      plan_id,
+      tryout_id,
+      tryout_package_code,
+      tryout_package_id,
+      simulation_id,
+      bimbel_class_id,
+      package_id
+    } = req.body;
 
-    if (!user_id || (!plan_id && !tryout_id && !simulation_id && !bimbel_class_id)) {
+    if (!user_id || (!plan_id && !tryout_id && !tryout_package_code && !tryout_package_id && !simulation_id && !bimbel_class_id)) {
       return res.status(400).json({
-        error: "user_id and either plan_id, tryout_id, simulation_id or bimbel_class_id required"
+        error: "user_id and either plan_id, tryout_id, tryout_package_code, tryout_package_id, simulation_id or bimbel_class_id required"
       });
     }
 
@@ -58,6 +67,8 @@ router.post("/create", async (req, res) => {
     let itemName = "";
     let classId = null;
     let bimbelPackageId = package_id || null;
+    let tryoutPackageId = tryout_package_id || null;
+    let pkgType = null;
 
     if (bimbel_class_id) {
       /**
@@ -127,9 +138,54 @@ router.post("/create", async (req, res) => {
       amount = Number(simulation.price || 0);
       itemId = simulation.id;
       itemName = `Simulasi: ${simulation.title}`;
+    } else if (tryout_package_code || tryout_package_id) {
+      /**
+       * GET TRYOUT BUNDLE PACKAGE
+       */
+      let pkgQuery = supabase.from("tryout_packages").select("*");
+      if (tryout_package_id) {
+        pkgQuery = pkgQuery.eq("id", tryout_package_id);
+      } else {
+        pkgQuery = pkgQuery.eq("code", tryout_package_code);
+      }
+      const { data: pkg, error: pkgError } = await pkgQuery.maybeSingle();
+
+      if (pkgError || !pkg) {
+        return res.status(404).json({
+          error: "Tryout Package not found"
+        });
+      }
+
+      // ANTI-DOUBLE PURCHASE CHECK for bundle_kombo
+      if (pkg.code === "bundle_kombo") {
+        const { data: userRegs } = await supabase
+          .from("tryout_registrations")
+          .select("tryout_id, package_type, tryout_sets(bundle_type)")
+          .eq("user_id", user_id)
+          .eq("verified", true);
+
+        const hasFiveTo = userRegs?.some(
+          (r) => r.tryout_sets?.bundle_type === "bundle_5_to" || r.package_type === "bundle_5_to"
+        );
+        const hasStase = userRegs?.some(
+          (r) => r.tryout_sets?.bundle_type === "bundle_stase"
+        );
+
+        if (hasFiveTo || hasStase) {
+          return res.status(400).json({
+            error: "Pembelian Paket Kombo ditutup karena akun Anda telah memiliki paket/stase bagian dari program ini."
+          });
+        }
+      }
+
+      tryoutPackageId = pkg.id;
+      pkgType = pkg.code;
+      amount = Number(pkg.promo_price !== null && pkg.promo_price !== undefined ? pkg.promo_price : pkg.price);
+      itemId = pkg.code;
+      itemName = pkg.title;
     } else if (tryout_id) {
       /**
-       * GET TRYOUT SET
+       * GET TRYOUT SET (Batch or Stase A La Carte)
        */
       const { data: tryout, error: tryoutError } = await supabase
         .from("tryout_sets")
@@ -144,8 +200,9 @@ router.post("/create", async (req, res) => {
       }
 
       amount = Number(tryout.price || 0);
-      itemId = tryout.id;
-      itemName = `Tryout: ${tryout.title}`;
+      itemId = tryout.code || tryout.id;
+      itemName = tryout.bundle_type === "bundle_stase" ? `TO Stase: ${tryout.title}` : `Tryout: ${tryout.title}`;
+      pkgType = tryout.bundle_type || "single";
     } else {
       /**
        * GET PLAN
@@ -229,6 +286,8 @@ router.post("/create", async (req, res) => {
       user_id,
       plan_id: plan_id || null,
       tryout_id: tryout_id || null,
+      tryout_package_id: tryoutPackageId || null,
+      package_type: pkgType || null,
       simulation_id: simulation_id || null,
       bimbel_class_id: bimbel_class_id || null,
       bimbel_package_id: bimbelPackageId || null,
@@ -459,9 +518,52 @@ router.post("/notification", async (req, res) => {
         } else {
           console.log("SIMULATION REGISTRATION ACTIVATED FOR USER:", payment.user_id, "SIMULATION:", payment.simulation_id);
         }
+      } else if (payment.tryout_package_id || payment.package_type === "bundle_5_to" || payment.package_type === "bundle_kombo") {
+        /**
+         * ACTIVATE TRYOUT BUNDLE REGISTRATIONS
+         */
+        const pkgType = payment.package_type;
+        let targetSetsQuery = supabase.from("tryout_sets").select("id").eq("is_published", true);
+
+        if (pkgType === "bundle_5_to") {
+          targetSetsQuery = targetSetsQuery.eq("bundle_type", "bundle_5_to");
+        } else if (pkgType === "bundle_kombo") {
+          targetSetsQuery = targetSetsQuery.in("bundle_type", ["bundle_5_to", "bundle_stase"]);
+        }
+
+        const { data: targetSets, error: setsErr } = await targetSetsQuery;
+        if (!setsErr && targetSets && targetSets.length > 0) {
+          const perItemAmount = Math.round(Number(payment.amount || 0) / targetSets.length);
+          for (const s of targetSets) {
+            const { data: existingReg } = await supabase
+              .from("tryout_registrations")
+              .select("id")
+              .eq("user_id", payment.user_id)
+              .eq("tryout_id", s.id)
+              .maybeSingle();
+
+            const regPayload = {
+              user_id: payment.user_id,
+              tryout_id: s.id,
+              gform_submitted: true,
+              verified: true,
+              module_access: true,
+              package_type: pkgType,
+              payment_id: payment.id,
+              paid_amount: perItemAmount
+            };
+
+            if (existingReg) {
+              await supabase.from("tryout_registrations").update(regPayload).eq("id", existingReg.id);
+            } else {
+              await supabase.from("tryout_registrations").insert([regPayload]);
+            }
+          }
+          console.log(`TRYOUT BUNDLE ACTIVATED (${pkgType}) FOR USER: ${payment.user_id} (${targetSets.length} sets unlocked)`);
+        }
       } else if (payment.tryout_id) {
         /**
-         * ACTIVATE TRYOUT REGISTRATION
+         * ACTIVATE SINGLE TRYOUT REGISTRATION (Batch or Stase A La Carte)
          */
         const { data: existingReg } = await supabase
           .from("tryout_registrations")
@@ -476,7 +578,7 @@ router.post("/notification", async (req, res) => {
           gform_submitted: true,
           verified: true,
           module_access: true,
-          package_type: "paid",
+          package_type: payment.package_type || "paid",
           payment_id: payment.id,
           paid_amount: payment.amount
         };
@@ -488,9 +590,10 @@ router.post("/notification", async (req, res) => {
             .update({
               verified: true,
               module_access: true,
-              package_type: "paid",
+              package_type: payment.package_type || "paid",
               payment_id: payment.id,
-              paid_amount: payment.amount
+              paid_amount: payment.amount,
+              gform_submitted: true
             })
             .eq("id", existingReg.id);
           regError = error;
@@ -633,6 +736,76 @@ router.post("/notification", async (req, res) => {
  *     tags:
  *       - Payments
  *     summary: Get payment status by order id
+ *     parameters:
+/**
+ * @openapi
+ * /api/payments/tryout-eligibility/{userId}:
+ *   get:
+ *     tags:
+ *       - Payments
+ *     summary: Check tryout bundle ownership and combo eligibility
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Returns ownership and eligibility status
+ */
+router.get("/tryout-eligibility/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
+    }
+
+    const { data: userRegs, error } = await supabase
+      .from("tryout_registrations")
+      .select("tryout_id, package_type, tryout_sets(id, bundle_type)")
+      .eq("user_id", userId)
+      .eq("verified", true);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const hasFiveToBundle = userRegs?.some(
+      (r) => r.tryout_sets?.bundle_type === "bundle_5_to" || r.package_type === "bundle_5_to" || r.package_type === "bundle_kombo"
+    ) || false;
+
+    const hasStaseItems = userRegs?.some(
+      (r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_kombo"
+    ) || false;
+
+    const ownedStaseIds = userRegs
+      ?.filter((r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_kombo")
+      .map((r) => r.tryout_id) || [];
+
+    const isKomboEligible = !hasFiveToBundle && !hasStaseItems;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        has_five_to_bundle: hasFiveToBundle,
+        has_stase_items: hasStaseItems,
+        owned_stase_ids: ownedStaseIds,
+        is_kombo_eligible: isKomboEligible
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * @openapi
+ * /api/payments/{order_id}:
+ *   get:
+ *     tags:
+ *       - Payments
+ *     summary: Get payment details by order_id
  *     parameters:
  *       - in: path
  *         name: order_id
