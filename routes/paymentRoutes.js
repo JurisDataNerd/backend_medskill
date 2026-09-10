@@ -168,12 +168,50 @@ router.post("/create", async (req, res) => {
           (r) => r.tryout_sets?.bundle_type === "bundle_5_to" || r.package_type === "bundle_5_to"
         );
         const hasStase = userRegs?.some(
-          (r) => r.tryout_sets?.bundle_type === "bundle_stase"
+          (r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_stase"
         );
 
         if (hasFiveTo || hasStase) {
           return res.status(400).json({
             error: "Pembelian Paket Kombo ditutup karena akun Anda telah memiliki paket/stase bagian dari program ini."
+          });
+        }
+      }
+
+      // ANTI-DOUBLE PURCHASE CHECK for bundle_stase (Full 10 Stase)
+      if (pkg.code === "bundle_stase") {
+        const { data: userRegs } = await supabase
+          .from("tryout_registrations")
+          .select("tryout_id, package_type, tryout_sets(bundle_type)")
+          .eq("user_id", user_id)
+          .eq("verified", true);
+
+        const hasKombo = userRegs?.some((r) => r.package_type === "bundle_kombo");
+        const ownedStases = userRegs?.filter((r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_stase") || [];
+
+        if (hasKombo || ownedStases.length >= 10) {
+          return res.status(400).json({
+            error: "Anda sudah memiliki seluruh paket tryout stase."
+          });
+        }
+      }
+
+      // ANTI-DOUBLE PURCHASE CHECK for bundle_5_to (Full 5 TO)
+      if (pkg.code === "bundle_5_to") {
+        const { data: userRegs } = await supabase
+          .from("tryout_registrations")
+          .select("tryout_id, package_type, tryout_sets(bundle_type)")
+          .eq("user_id", user_id)
+          .eq("verified", true);
+
+        const hasKombo = userRegs?.some((r) => r.package_type === "bundle_kombo");
+        const hasFiveTo = userRegs?.some(
+          (r) => r.tryout_sets?.bundle_type === "bundle_5_to" || r.package_type === "bundle_5_to"
+        );
+
+        if (hasKombo || hasFiveTo) {
+          return res.status(400).json({
+            error: "Anda sudah memiliki akses ke Paket 5 Try Out UKNPDPD."
           });
         }
       }
@@ -196,6 +234,21 @@ router.post("/create", async (req, res) => {
       if (tryoutError || !tryout) {
         return res.status(404).json({
           error: "Tryout not found"
+        });
+      }
+
+      // ANTI-DOUBLE PURCHASE CHECK for individual tryout
+      const { data: existingReg } = await supabase
+        .from("tryout_registrations")
+        .select("id, verified")
+        .eq("user_id", user_id)
+        .eq("tryout_id", tryout_id)
+        .eq("verified", true)
+        .maybeSingle();
+
+      if (existingReg) {
+        return res.status(400).json({
+          error: "Anda sudah memiliki akses aktif ke tryout ini."
         });
       }
 
@@ -518,7 +571,7 @@ router.post("/notification", async (req, res) => {
         } else {
           console.log("SIMULATION REGISTRATION ACTIVATED FOR USER:", payment.user_id, "SIMULATION:", payment.simulation_id);
         }
-      } else if (payment.tryout_package_id || payment.package_type === "bundle_5_to" || payment.package_type === "bundle_kombo") {
+      } else if (payment.tryout_package_id || payment.package_type === "bundle_5_to" || payment.package_type === "bundle_stase" || payment.package_type === "bundle_kombo") {
         /**
          * ACTIVATE TRYOUT BUNDLE REGISTRATIONS
          */
@@ -527,6 +580,8 @@ router.post("/notification", async (req, res) => {
 
         if (pkgType === "bundle_5_to") {
           targetSetsQuery = targetSetsQuery.eq("bundle_type", "bundle_5_to");
+        } else if (pkgType === "bundle_stase") {
+          targetSetsQuery = targetSetsQuery.eq("bundle_type", "bundle_stase");
         } else if (pkgType === "bundle_kombo") {
           targetSetsQuery = targetSetsQuery.in("bundle_type", ["bundle_5_to", "bundle_stase"]);
         }
@@ -767,11 +822,11 @@ router.get("/tryout-eligibility/:userId", async (req, res) => {
     ) || false;
 
     const hasStaseItems = userRegs?.some(
-      (r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_kombo"
+      (r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_kombo" || r.package_type === "bundle_stase"
     ) || false;
 
     const ownedStaseIds = userRegs
-      ?.filter((r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_kombo")
+      ?.filter((r) => r.tryout_sets?.bundle_type === "bundle_stase" || r.package_type === "bundle_kombo" || r.package_type === "bundle_stase")
       .map((r) => r.tryout_id) || [];
 
     const isKomboEligible = !hasFiveToBundle && !hasStaseItems;
